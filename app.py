@@ -19,6 +19,19 @@ def get_data():
 
 df = get_data()
 
+# データの準備
+df_display = df.copy()
+
+# 追加：25日移動平均線 (SMA25)
+df_display['SMA25'] = df_display['y'].rolling(window=25).mean()
+
+# RSI (相対力指数) の計算
+delta = df_display['y'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+rs = gain / loss
+df_display['RSI'] = 100 - (100 / (1 + rs))
+
 # --- 2. 予測ロジック ---
 # A. 「30日前」の視点での答え合わせ予測
 df_past = df.iloc[:-30] # 直近30日を除外して学習
@@ -78,3 +91,16 @@ mape = (abs(actual_last_30 - pred_last_30) / actual_last_30).mean() * 100
 col1, col2 = st.columns(2)
 col1.metric("平均誤差率 (MAPE)", f"{mape:.2f} %")
 col2.write("※一般的に5%以内なら高精度、10%以内なら良好とされます。")
+
+with st.expander("🛠️ このサイトの技術的な構成について"):
+    st.markdown("""
+    ### 使用ライブラリ
+    - **Prophet**: Meta社が開発した時系列予測モデル。トレンドの変化点を自動検知します。
+    - **Streamlit**: データ分析アプリを迅速にWeb化するためのフレームワーク。
+    - **Plotly**: ズームやホバーが可能な高機能グラフライブラリ。
+    
+    ### 仕組み
+    1. `yfinance` で最新のBTC価格を取得。
+    2. 過去2年間のデータを `Prophet` に学習させ、30日先を予測。
+    3. 30日前の時点での予測値と実績値を比較し、誤差率（MAPE）を算出。
+    """)
