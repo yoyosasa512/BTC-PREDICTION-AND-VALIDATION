@@ -3,6 +3,7 @@ import yfinance as yf
 from prophet import Prophet
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="BTC予測・答え合わせボード", layout="wide")
@@ -11,18 +12,20 @@ st.title("📈 ビットコイン予測：答え合わせ ＆ 未来予測")
 # --- 1. データ取得 ---
 @st.cache_data
 def get_data():
+    # 2年分のデータを取得
     df = yf.download("BTC-JPY", period="2y", interval="1d")
     df = df.reset_index()[['Date', 'Close']]
     df.columns = ['ds', 'y']
-    df['ds'] = df['ds'].dt.tz_localize(None)
+    # 日付型を標準的なdatetimeに変換し、タイムゾーンを削除
+    df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)
     return df
 
 df = get_data()
 
-# データの準備
+# データの準備（テクニカル指標の計算用）
 df_display = df.copy()
 
-# 追加：25日移動平均線 (SMA25)
+# 25日移動平均線 (SMA25)
 df_display['SMA25'] = df_display['y'].rolling(window=25).mean()
 
 # RSI (相対力指数) の計算
@@ -34,7 +37,7 @@ df_display['RSI'] = 100 - (100 / (1 + rs))
 
 # --- 2. 予測ロジック ---
 # A. 「30日前」の視点での答え合わせ予測
-df_past = df.iloc[:-30] # 直近30日を除外して学習
+df_past = df.iloc[:-30] 
 model_backtest = Prophet(daily_seasonality=True)
 model_backtest.fit(df_past)
 future_backtest = model_backtest.make_future_dataframe(periods=30)
@@ -47,51 +50,84 @@ future_real = model_future.make_future_dataframe(periods=30)
 forecast_future = model_future.predict(future_real)
 
 # --- 3. グラフ作成 (Plotly) ---
-fig = go.Figure()
+fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-# ① 実績値（実際の価格）
-fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name="実績価格", line=dict(color='black', width=2)))
+# ① 実績値（黒い線）
+fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name="実績価格", 
+                         line=dict(color='black', width=2)),
+              secondary_y=False)
 
-# ② 答え合わせ（30日前の予測結果）
-# 直近30日分のみ抽出
-bt_result = forecast_backtest.iloc[-30:]
-fig.add_trace(go.Scatter(x=bt_result['ds'], y=bt_result['yhat'], 
-                         name="30日前の予測（答え合わせ用）", 
-                         line=dict(color='orange', dash='dot')))
+# SMA25（緑の線）
+fig.add_trace(go.Scatter(x=df_display['ds'], y=df_display['SMA25'], 
+                         name="SMA25", line=dict(color='green', width=1)),
+              secondary_y=False)
 
-# ③ 未来予測（今日から30日後）
-future_result = forecast_future.iloc[-30:]
-fig.add_trace(go.Scatter(x=future_result['ds'], y=future_result['yhat'], 
-                         name="今後の予測", 
-                         line=dict(color='blue', width=3)))
+# RSI（紫の線・第2軸）
+fig.add_trace(go.Scatter(x=df_display['ds'], y=df_display['RSI'], 
+                         name="RSI", line=dict(color='purple', width=1)),
+              secondary_y=True)
 
-# 予測の幅（薄い青色）
-fig.add_trace(go.Scatter(x=future_result['ds'], y=future_result['yhat_upper'], 
-                         line=dict(width=0), showlegend=False))
-fig.add_trace(go.Scatter(x=future_result['ds'], y=future_result['yhat_lower'], 
+# RSIの境界線
+fig.add_hline(y=70, line_dash="dot", line_color="red", secondary_y=True)
+fig.add_hline(y=30, line_dash="dot", line_color="blue", secondary_y=True)
+
+# --- 【重要】線を繋げるためのデータ結合処理 ---
+
+# 1. 実績の最後の1点を抽出（青い線のスタート地点にする）
+last_actual_point = df.iloc[[-1]][['ds', 'y']].copy()
+last_actual_point.columns = ['ds', 'yhat'] # Prophetの出力名に合わせる
+
+# 2. 未来予測の線を繋げる（今後の予測：青い線）
+# 実績の最終日より「後」の予測データを取得
+future_only = forecast_future[forecast_future['ds'] > df['ds'].max()]
+# 実績の最後 + 未来予測 を結合
+future_combined = pd.concat([last_actual_point, future_only], ignore_index=True)
+
+# ③ 未来予測の描画
+fig.add_trace(go.Scatter(x=future_combined['ds'], y=future_combined['yhat'], 
+                         name="今後の予測", line=dict(color='blue', width=3)),
+              secondary_y=False)
+
+# 予測の不確実性（網掛け）も結合データを使用
+fig.add_trace(go.Scatter(x=future_combined['ds'], y=forecast_future.loc[forecast_future['ds'] >= df['ds'].max(), 'yhat_upper'], 
+                         line=dict(width=0), showlegend=False), secondary_y=False)
+fig.add_trace(go.Scatter(x=future_combined['ds'], y=forecast_future.loc[forecast_future['ds'] >= df['ds'].max(), 'yhat_lower'], 
                          line=dict(width=0), fill='tonexty', fillcolor='rgba(0,0,255,0.1)', 
-                         showlegend=False))
+                         showlegend=False), secondary_y=False)
 
-fig.update_layout(title="ビットコイン価格推移と予測比較", xaxis_title="日付", yaxis_title="価格 (JPY)",
+# 3. 答え合わせの線を繋げる（オレンジの点線）
+last_past_point = df_past.iloc[[-1]][['ds', 'y']].copy()
+last_past_point.columns = ['ds', 'yhat']
+bt_only = forecast_backtest[forecast_backtest['ds'] > df_past['ds'].max()]
+bt_combined = pd.concat([last_past_point, bt_only], ignore_index=True)
+
+# ② 答え合わせ予測の描画
+fig.add_trace(go.Scatter(x=bt_combined['ds'], y=bt_combined['yhat'], 
+                         name="30日前の予測（答え合わせ）", 
+                         line=dict(color='orange', dash='dot')),
+              secondary_y=False)
+
+# レイアウト設定
+fig.update_layout(title="ビットコイン価格推移と予測比較", xaxis_title="日付", 
                   hovermode="x unified", template="plotly_white")
+fig.update_yaxes(title_text="価格 (JPY)", secondary_y=False)
+fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True)
 
-# 表示範囲を直近3ヶ月に絞る（初期状態）
+# 表示範囲を直近90日に設定
 last_date = df['ds'].max()
-fig.update_xaxes(range=[last_date - timedelta(days=90), last_date + timedelta(days=30)])
+fig.update_xaxes(range=[last_date - timedelta(days=90), last_date + timedelta(days=35)])
 
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 4. 精度指標の表示 ---
+# --- 4. 精度指標 ---
 st.subheader("📊 予測精度の自己採点（直近30日間）")
-# 簡易的な誤差計算
 actual_last_30 = df.iloc[-30:]['y'].values
-pred_last_30 = bt_result['yhat'].values
-mape = (abs(actual_last_30 - pred_last_30) / actual_last_30).mean() * 100
+pred_eval = forecast_backtest.iloc[-30:]['yhat'].values
+mape = (abs(actual_last_30 - pred_eval) / actual_last_30).mean() * 100
 
 col1, col2 = st.columns(2)
 col1.metric("平均誤差率 (MAPE)", f"{mape:.2f} %")
 col2.write("※一般的に5%以内なら高精度、10%以内なら良好とされます。")
-
 with st.expander("🛠️ このサイトの技術的な構成について"):
     st.markdown("""
     ### 使用ライブラリ
