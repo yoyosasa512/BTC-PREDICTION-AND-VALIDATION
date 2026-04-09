@@ -1,0 +1,1 @@
+[![Python application testing](https://github.com/yoyosasa512/BTC-PREDICTION-AND-VALIDATION/actions/workflows/python-app.yml/badge.svg)](https://github.com/yoyosasa512/BTC-PREDICTION-AND-VALIDATION/actions/workflows/python-app.yml)
