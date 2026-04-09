@@ -1,4 +1,7 @@
 [![Python application testing](https://github.com/yoyosasa512/BTC-PREDICTION-AND-VALIDATION/actions/workflows/python-app.yml/badge.svg)](https://github.com/yoyosasa512/BTC-PREDICTION-AND-VALIDATION/actions/workflows/python-app.yml)
+### システム構成図
+
+```mermaid
 graph LR
     subgraph Local_Development ["ローカル開発環境"]
         A[VSCode / Python] -->|指示| B(Antigravity / AI)
