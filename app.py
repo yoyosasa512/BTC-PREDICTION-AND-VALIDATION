@@ -32,11 +32,37 @@ def add_technical_indicators(df):
 @st.cache_data
 def get_data():
     """データを取得し、Prophet形式に整える関数"""
-    df = yf.download("BTC-JPY", period="2y", interval="1d")
-    df = df.reset_index()[['Date', 'Close']]
-    df.columns = ['ds', 'y']
-    df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)
-    return df
+    try:
+        # yfinanceでのデータ取得（progressをFalseにして不要な出力を抑制）
+        df = yf.download("BTC-JPY", period="2y", interval="1d", progress=False)
+        
+        if df.empty:
+            return pd.DataFrame()
+            
+        # yfinance 0.2.x 系の MultiIndex 対応（カラムを1層に平坦化）
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        df = df.reset_index()
+        
+        # 日付カラムの特定（通常は 'Date'）
+        date_col = 'Date' if 'Date' in df.columns else df.columns[0]
+        
+        if 'Close' not in df.columns:
+            return pd.DataFrame()
+            
+        df = df[[date_col, 'Close']]
+        df.columns = ['ds', 'y']
+        
+        # データのクレンジング
+        df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)
+        df['y'] = pd.to_numeric(df['y'], errors='coerce')
+        df = df.dropna(subset=['y'])
+        
+        return df
+    except Exception as e:
+        st.error(f"データ取得中にエラーが発生しました: {e}")
+        return pd.DataFrame()
 
 # --- 1. アプリの基本設定 ---
 
@@ -64,7 +90,18 @@ with st.sidebar:
 # --- 3. メイン処理：データの準備 ---
 
 df = get_data()
-# テクニカル指標の計算（関数呼び出し）
+
+# 取得データのバリデーション
+if df.empty:
+    st.error("📉 データの取得に失敗しました。Yahoo Financeの接続制限か、一時的なネットワークエラーの可能性があります。しばらく時間を置いてから再度リロードしてみてください。")
+    st.stop()
+
+# バックテスト（過去30日分除外）に十分なデータがあるか確認
+if len(df) < 35: # 2行以上の学習データ + 30日のバックテスト + 余裕
+    st.warning(f"⚠️ データ件数が不足しています（現在 {len(df)} 件）。正常な予測には少なくとも35日分以上の過去データが必要です。")
+    st.stop()
+
+# テクニカル指標の計算
 df_display = add_technical_indicators(df)
 
 # --- 4. 予測ロジック ---
