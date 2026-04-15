@@ -33,8 +33,8 @@ def add_technical_indicators(df):
 def get_data():
     """データを取得し、Prophet形式に整える関数"""
     try:
-        # yfinanceでのデータ取得（progressをFalseにして不要な出力を抑制）
-        df = yf.download("BTC-JPY", period="2y", interval="1d", progress=False)
+        # yfinanceでのデータ取得（3年分取得して計算用の余裕を確保）
+        df = yf.download("BTC-JPY", period="3y", interval="1d", progress=False)
         
         if df.empty:
             return pd.DataFrame()
@@ -85,6 +85,9 @@ with st.sidebar:
     ### 🧪 技術スタック
     - **AIモデル**: Prophet (Meta社製)
     - **自動テスト**: pytest + GitHub Actions
+    
+    > **技術解説**: テクニカル指標（SMA/RSI）の計算に伴う初期データの欠損を補完するため、バックエンドでは3年分のデータを取得し、計算後の有効データのみを予測モデルに投入するパイプラインを構築しています。
+    ---
     """)
 
 # --- 3. メイン処理：データの準備 ---
