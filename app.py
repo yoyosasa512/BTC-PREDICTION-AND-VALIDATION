@@ -207,7 +207,7 @@ fig.update_yaxes(title_text="RSI", range=[0, 100], secondary_y=True)
 last_date = df['ds'].max()
 fig.update_xaxes(range=[last_date - timedelta(days=90), last_date + timedelta(days=35)])
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # --- 6. 精度指標 ---
 
