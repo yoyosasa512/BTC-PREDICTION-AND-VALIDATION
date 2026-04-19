@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+from st_supabase_connection import SupabaseConnection
 
 # --- 0. 計算ロジック・関数の定義 ---
 
@@ -29,40 +30,70 @@ def add_technical_indicators(df):
     df_result['RSI'] = 100 - (100 / (1 + rs))
     return df_result
 
-@st.cache_data
+# Supabase接続の初期化
+conn = st.connection("supabase", type=SupabaseConnection)
+
+@st.cache_data(ttl=3600)
 def get_data():
-    """データを取得し、Prophet形式に整える関数"""
+    """データをDBから取得し、未取得分をyfinanceで補完してDBに保存する関数"""
+    # 1. Supabaseから既存データを取得
     try:
-        # yfinanceでのデータ取得（3年分取得して計算用の余裕を確保）
-        df = yf.download("BTC-JPY", period="3y", interval="1d", progress=False)
-        
-        if df.empty:
-            return pd.DataFrame()
-            
-        # yfinance 0.2.x 系の MultiIndex 対応（カラムを1層に平坦化）
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        df = df.reset_index()
-        
-        # 日付カラムの特定（通常は 'Date'）
-        date_col = 'Date' if 'Date' in df.columns else df.columns[0]
-        
-        if 'Close' not in df.columns:
-            return pd.DataFrame()
-            
-        df = df[[date_col, 'Close']]
-        df.columns = ['ds', 'y']
-        
-        # データのクレンジング
-        df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)
-        df['y'] = pd.to_numeric(df['y'], errors='coerce')
-        df = df.dropna(subset=['y'])
-        
-        return df
+        res = conn.table("btc_prices").select("*").execute()
+        df_db = pd.DataFrame(res.data)
+        if not df_db.empty:
+            df_db['ds'] = pd.to_datetime(df_db['ds'])
+            latest_date_in_db = df_db['ds'].max()
+        else:
+            latest_date_in_db = None
     except Exception as e:
-        st.error(f"データ取得中にエラーが発生しました: {e}")
-        return pd.DataFrame()
+        # 初回実行時などでテーブルがない場合
+        st.warning(f"DB接続エラー（初回はテーブル作成が必要です）: {e}")
+        df_db = pd.DataFrame()
+        latest_date_in_db = None
+
+    # 2. yfinanceから差分（または全件）を取得
+    try:
+        if latest_date_in_db is None:
+            # DBが空の場合は3年分取得
+            df_new = yf.download("BTC-JPY", period="3y", interval="1d", progress=False)
+            st.info("初回データ取得を実行しました（3年分）。")
+        else:
+            # DBにある最新日の翌日から今日までを取得
+            start_date = (latest_date_in_db + timedelta(days=1)).strftime('%Y-%m-%d')
+            # yf.downloadに本日までの期間を指定
+            df_new = yf.download("BTC-JPY", start=start_date, interval="1d", progress=False)
+
+        if not df_new.empty:
+            # データ整形
+            if isinstance(df_new.columns, pd.MultiIndex):
+                df_new.columns = df_new.columns.get_level_values(0)
+            df_new = df_new.reset_index()
+            date_col = 'Date' if 'Date' in df_new.columns else df_new.columns[0]
+            df_new = df_new[[date_col, 'Close']]
+            df_new.columns = ['ds', 'y']
+            df_new['ds'] = pd.to_datetime(df_new['ds']).dt.tz_localize(None)
+            df_new['y'] = pd.to_numeric(df_new['y'], errors='coerce')
+            df_new = df_new.dropna(subset=['y'])
+
+            # 3. 新規データをSupabaseに保存 (Upsert)
+            if not df_new.empty:
+                upsert_data = df_new.copy()
+                upsert_data['ds'] = upsert_data['ds'].dt.strftime('%Y-%m-%d')
+                records = upsert_data.to_dict(orient='records')
+                conn.table("btc_prices").upsert(records).execute()
+                
+                # DBデータと結合
+                df_result = pd.concat([df_db, df_new]).drop_duplicates(subset=['ds'])
+            else:
+                df_result = df_db
+        else:
+            df_result = df_db
+
+        return df_result.sort_values('ds').reset_index(drop=True)
+
+    except Exception as e:
+        st.error(f"データ取得・保存中にエラーが発生しました: {e}")
+        return df_db if not df_db.empty else pd.DataFrame()
 
 # --- 1. アプリの基本設定 ---
 

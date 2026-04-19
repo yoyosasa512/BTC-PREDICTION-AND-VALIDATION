@@ -3,3 +3,4 @@ yfinance
 prophet
 pandas
 plotly
+st-supabase-connection
