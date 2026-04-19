@@ -31,7 +31,21 @@ def add_technical_indicators(df):
     return df_result
 
 # Supabase接続の初期化
-conn = st.connection("supabase", type=SupabaseConnection)
+# Streamlit Cloud環境での自動認識エラーを回避するため、明示的にsecretsから取得して渡します
+try:
+    # 標準的な connections.supabase 形式を試行
+    supabase_url = st.secrets["connections"]["supabase"]["url"]
+    supabase_key = st.secrets["connections"]["supabase"]["key"]
+except Exception:
+    # 失敗した場合はプロジェクトのルートレベルにある可能性も考慮
+    supabase_url = st.secrets.get("SUPABASE_URL")
+    supabase_key = st.secrets.get("SUPABASE_KEY")
+
+if not supabase_url or not supabase_key:
+    st.error("❌ Supabaseの接続情報（URL/Key）がSecretsに見つかりません。設定を確認してください。")
+    st.stop()
+
+conn = st.connection("supabase", type=SupabaseConnection, url=supabase_url, key=supabase_key)
 
 @st.cache_data(ttl=3600)
 def get_data():
