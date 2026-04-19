@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-from st_supabase_connection import SupabaseConnection
+from supabase import create_client
 
 # --- 0. 計算ロジック・関数の定義 ---
 
@@ -30,29 +30,31 @@ def add_technical_indicators(df):
     df_result['RSI'] = 100 - (100 / (1 + rs))
     return df_result
 
-# Supabase接続の初期化
-# Streamlit Cloud環境での自動認識エラーを回避するため、明示的にsecretsから取得して渡します
-try:
-    # 標準的な connections.supabase 形式を試行
-    supabase_url = st.secrets["connections"]["supabase"]["url"]
-    supabase_key = st.secrets["connections"]["supabase"]["key"]
-except Exception:
-    # 失敗した場合はプロジェクトのルートレベルにある可能性も考慮
-    supabase_url = st.secrets.get("SUPABASE_URL")
-    supabase_key = st.secrets.get("SUPABASE_KEY")
+# Supabase接続の初期化（標準的な接続方法）
+@st.cache_resource
+def init_supabase():
+    try:
+        # secrets.toml の [connections.supabase] セクションから取得
+        url = st.secrets["connections"]["supabase"]["url"]
+        key = st.secrets["connections"]["supabase"]["key"]
+    except Exception:
+        # またはトップレベルの SUPABASE_URL / SUPABASE_KEY から取得
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_KEY")
+    
+    if not url or not key:
+        st.error("❌ Supabaseの接続設定が見つかりません。")
+        st.stop()
+    return create_client(url, key)
 
-if not supabase_url or not supabase_key:
-    st.error("❌ Supabaseの接続情報（URL/Key）がSecretsに見つかりません。設定を確認してください。")
-    st.stop()
-
-conn = st.connection("supabase", type=SupabaseConnection, url=supabase_url, key=supabase_key)
+supabase = init_supabase()
 
 @st.cache_data(ttl=3600)
 def get_data():
     """データをDBから取得し、未取得分をyfinanceで補完してDBに保存する関数"""
     # 1. Supabaseから既存データを取得
     try:
-        res = conn.table("btc_prices").select("*").execute()
+        res = supabase.table("btc_prices").select("*").execute()
         df_db = pd.DataFrame(res.data)
         if not df_db.empty:
             df_db['ds'] = pd.to_datetime(df_db['ds'])
@@ -94,7 +96,7 @@ def get_data():
                 upsert_data = df_new.copy()
                 upsert_data['ds'] = upsert_data['ds'].dt.strftime('%Y-%m-%d')
                 records = upsert_data.to_dict(orient='records')
-                conn.table("btc_prices").upsert(records).execute()
+                supabase.table("btc_prices").upsert(records).execute()
                 
                 # DBデータと結合
                 df_result = pd.concat([df_db, df_new]).drop_duplicates(subset=['ds'])
