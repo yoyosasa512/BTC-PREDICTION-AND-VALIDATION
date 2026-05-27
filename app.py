@@ -87,6 +87,12 @@ def get_data():
             date_col = 'Date' if 'Date' in df_new.columns else df_new.columns[0]
             df_new = df_new[[date_col, 'Close']]
             df_new.columns = ['ds', 'y']
+            
+            # もしアクセス制限などでデータが空だった場合は処理を停止し、警告を出す
+            if df_new.empty:
+                st.error("⚠️ Yahoo Financeのアクセス制限（Rate Limit）に達したため、データを取得できませんでした。数分〜1時間ほど時間をおいてから再度お試しください。")
+                st.stop()
+            
             df_new['ds'] = pd.to_datetime(df_new['ds']).dt.tz_localize(None)
             df_new['y'] = pd.to_numeric(df_new['y'], errors='coerce')
             df_new = df_new.dropna(subset=['y'])
