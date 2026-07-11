@@ -2,6 +2,6 @@ streamlit
 yfinance
 prophet==1.1.4
 cmdstanpy==1.1.0
-pandas
+pandas==2.1.4
 plotly
 supabase
